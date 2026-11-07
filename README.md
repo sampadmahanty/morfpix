@@ -16,7 +16,7 @@ A small command-line image compression and format conversion tool written in Rus
 
 ## Installation
 
-Pre-compiled standalone binaries are available for **macOS** and **Windows** on the [Releases](https://github.com/sampadmahanty/morfpix/releases) page. No Rust toolchain or external dependencies required.
+Pre-compiled standalone binaries are available for **macOS (Apple Silicon)** and **Windows** on the [Releases](https://github.com/sampadmahanty/morfpix/releases) page. No Rust toolchain or external dependencies required.
 
 ### macOS (Apple Silicon)
 
@@ -33,7 +33,9 @@ Pre-compiled standalone binaries are available for **macOS** and **Windows** on 
 2. Extract `morfpix.exe` and `mpix.exe`.
 3. Add the extracted directory to your `PATH` (or run them directly from PowerShell / Command Prompt).
 
-### Build from Source (Optional)
+*(Pre-compiled binaries for Linux will be provided in upcoming releases).*
+
+### Build from Source (Cross-Platform)
 
 Requires Rust 1.89 or newer.
 
@@ -41,7 +43,7 @@ Requires Rust 1.89 or newer.
 cargo build --release
 ```
 
-The binaries are written to `target/release/morfpix` and `target/release/mpix`.
+The binaries are written to `target/release/morfpix` and `target/release/mpix` (or `target/release/*.exe` on Windows).
 
 ## Usage
 
