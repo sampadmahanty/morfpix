@@ -1,0 +1,16 @@
+# Rust target artifacts
+target/
+**/*.rs.bk
+
+# Local binary symlinks
+/morfpix
+/mpix
+
+# OS & Editor
+.DS_Store
+.vscode/
+.idea/
+
+# Test output fixtures
+tests/fixtures/*.compressed.*
+tests/output/

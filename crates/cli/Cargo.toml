@@ -1,0 +1,23 @@
+[package]
+name = "morfpix"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.89"
+description = "Image compression and conversion command-line tool"
+repository = "https://github.com/sampadmahanty/morfpix"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+morfpix-engine = { path = "../engine" }
+rayon = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "morfpix"
+path = "src/bin/morfpix.rs"
+
+[[bin]]
+name = "mpix"
+path = "src/bin/mpix.rs"
