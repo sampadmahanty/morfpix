@@ -41,24 +41,11 @@ fn same_path(a: &Path, b: &Path) -> bool {
     if a == b {
         return true;
     }
+    #[cfg(unix)]
     if let (Ok(meta_a), Ok(meta_b)) = (fs::metadata(a), fs::metadata(b)) {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if meta_a.dev() == meta_b.dev() && meta_a.ino() == meta_b.ino() {
-                return true;
-            }
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::MetadataExt;
-            if meta_a.volume_serial_number() == meta_b.volume_serial_number() {
-                if let (Some(idx_a), Some(idx_b)) = (meta_a.file_index(), meta_b.file_index()) {
-                    if idx_a == idx_b {
-                        return true;
-                    }
-                }
-            }
+        use std::os::unix::fs::MetadataExt;
+        if meta_a.dev() == meta_b.dev() && meta_a.ino() == meta_b.ino() {
+            return true;
         }
     }
     match (fs::canonicalize(a), fs::canonicalize(b)) {
@@ -722,23 +709,23 @@ fn unique_output_path(path: PathBuf, used: &mut HashSet<PathBuf>) -> PathBuf {
     }
 }
 
-fn is_system_symlink(path: &Path) -> bool {
+fn is_system_symlink(_path: &Path) -> bool {
     #[cfg(target_os = "macos")]
     {
-        if path == Path::new("/tmp")
-            || path == Path::new("/var")
-            || path == Path::new("/etc")
-            || path == Path::new("/home")
+        if _path == Path::new("/tmp")
+            || _path == Path::new("/var")
+            || _path == Path::new("/etc")
+            || _path == Path::new("/home")
         {
             return true;
         }
     }
     #[cfg(target_os = "linux")]
     {
-        if path == Path::new("/bin")
-            || path == Path::new("/lib")
-            || path == Path::new("/lib64")
-            || path == Path::new("/sbin")
+        if _path == Path::new("/bin")
+            || _path == Path::new("/lib")
+            || _path == Path::new("/lib64")
+            || _path == Path::new("/sbin")
         {
             return true;
         }
