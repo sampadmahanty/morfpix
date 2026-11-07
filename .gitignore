@@ -1,5 +1,8 @@
 # Rust target artifacts
 target/
+dist/
+*.tar.gz
+*.zip
 **/*.rs.bk
 
 # Local binary symlinks
