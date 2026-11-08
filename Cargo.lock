@@ -724,8 +724,9 @@ dependencies = [
 
 [[package]]
 name = "morfpix"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
+ "image",
  "libc",
  "morfpix-engine",
  "rayon",
@@ -733,7 +734,7 @@ dependencies = [
 
 [[package]]
 name = "morfpix-engine"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "bytemuck",
  "image",

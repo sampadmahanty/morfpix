@@ -1,6 +1,6 @@
 [package]
 name = "morfpix"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 rust-version = "1.89"
 description = "Image compression and conversion command-line tool"
@@ -21,3 +21,6 @@ path = "src/bin/morfpix.rs"
 [[bin]]
 name = "mpix"
 path = "src/bin/mpix.rs"
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["gif"] }

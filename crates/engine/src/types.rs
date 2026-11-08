@@ -246,11 +246,53 @@ pub struct BmpOptions {
     pub bpp: BmpBitsPerPixel,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResizeFilter {
+    #[default]
+    Lanczos3,
+    CatmullRom,
+    Triangle,
+    Nearest,
+    Gaussian,
+}
+
+impl ResizeFilter {
+    pub fn to_filter_type(&self) -> image::imageops::FilterType {
+        match self {
+            ResizeFilter::Lanczos3 => image::imageops::FilterType::Lanczos3,
+            ResizeFilter::CatmullRom => image::imageops::FilterType::CatmullRom,
+            ResizeFilter::Triangle => image::imageops::FilterType::Triangle,
+            ResizeFilter::Nearest => image::imageops::FilterType::Nearest,
+            ResizeFilter::Gaussian => image::imageops::FilterType::Gaussian,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ResizeOptions {
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub filter: ResizeFilter,
+}
+
+impl Default for ResizeOptions {
+    fn default() -> Self {
+        Self {
+            width: None,
+            height: None,
+            filter: ResizeFilter::Lanczos3,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ConversionOptions {
     pub format: Option<ImageFormat>,
     pub quality: u8,
+    pub resize: Option<ResizeOptions>,
     pub jpeg: JpegOptions,
     pub avif: AvifOptions,
     pub png: PngOptions,
@@ -265,6 +307,7 @@ impl Default for ConversionOptions {
         Self {
             format: None,
             quality: 80,
+            resize: None,
             jpeg: JpegOptions::default(),
             avif: AvifOptions::default(),
             png: PngOptions::default(),
@@ -400,6 +443,25 @@ mod tests {
 
         let options_default: ConversionOptions = serde_json::from_str(r#"{}"#).unwrap();
         assert_eq!(options_default.bmp.bpp, BmpBitsPerPixel::Auto);
+        assert_eq!(options_default.resize, None);
+    }
+
+    #[test]
+    fn deserializes_partial_resize_options() {
+        let options: ConversionOptions =
+            serde_json::from_str(r#"{"resize": {"width": 800, "height": 600}}"#).unwrap();
+        assert!(options.resize.is_some());
+        let resize = options.resize.unwrap();
+        assert_eq!(resize.width, Some(800));
+        assert_eq!(resize.height, Some(600));
+        assert_eq!(resize.filter, ResizeFilter::Lanczos3);
+
+        let options_custom_filter: ConversionOptions =
+            serde_json::from_str(r#"{"resize": {"width": 1280, "filter": "catmullrom"}}"#).unwrap();
+        let resize2 = options_custom_filter.resize.unwrap();
+        assert_eq!(resize2.width, Some(1280));
+        assert_eq!(resize2.height, None);
+        assert_eq!(resize2.filter, ResizeFilter::CatmullRom);
     }
 
     #[test]

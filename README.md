@@ -82,6 +82,9 @@ mpix [OPTIONS] <DIRECTORY>
 | `--gif-repeat <MODE>`     | GIF repeat: `infinite`, `none`, or loop count `1`-`65535` (default: `infinite`)            |
 | `--gif-speed <1-30>`      | GIF NeuQuant color quantization speed: `1` (highest quality) to `30` (fastest) (default: `10`) |
 | `--bmp-bpp <MODE>`        | BMP bits per pixel: `8` (grayscale), `24` (RGB), `32` (RGBA), or `auto` (default: `auto`)  |
+| `--width <PX>`            | Target width in pixels (preserves aspect ratio)                                           |
+| `--height <PX>`           | Target height in pixels (preserves aspect ratio)                                          |
+| `--filter <FILTER>`       | Resize filter: `lanczos3`, `catmullrom`, `triangle`, `nearest`, `gaussian` (default: `lanczos3`) |
 | `-j, --jobs <N>`          | Concurrent jobs for batch mode, `0` = all cores (default: auto up to 4)                    |
 | `-h, --help`              | Print help                                                                                |
 | `-V, --version`           | Print version                                                                             |
@@ -101,7 +104,12 @@ When `--format` is omitted, the input format is kept. When `--output` is omitted
 - JXL options (`-e, --effort <1-9>`, `-t, --threads`) control compression effort and threading. JXL output is lossless modular mode, so `--quality` has no effect on it.
 - GIF options (`--gif-repeat`, `--gif-speed`) control repetition looping behavior and NeuQuant color quantization speed/quality.
 - BMP options (`--bmp-bpp`) control bits per pixel: `8` (grayscale palette), `24` (RGB), `32` (RGBA with alpha), or `auto` (preserves alpha in 32-bit if present, otherwise 24-bit RGB or 8-bit grayscale).
-- Animated GIF, WebP, AVIF, and JXL inputs are converted from their first frame only.
+- Resizing requires at least one dimension (`--width` or `--height`). Reject zero, malformed, or unreasonable dimensions (exceeding 16,384 px per dimension or 100,000,000 total pixels).
+- When only width or height is provided, input aspect ratio is preserved. When both are supplied, the image is fitted within the requested bounding box while preserving aspect ratio; it is never stretched.
+- Default resize filter is Lanczos3 (`lanczos3`), providing high-quality sharp resampling; `catmullrom` (bicubic), `triangle` (bilinear), `nearest` (nearest neighbor), and `gaussian` are also supported via `--filter`.
+- Resizing is applied after EXIF orientation is normalized (so rotated photos resize upright) and ICC profiles are color-managed to sRGB, and before encoding. Output metadata is omitted consistent with general conversions.
+- Animated GIF, WebP, AVIF, and JXL inputs are converted from their first frame only when converting without resize flags. When resizing is requested, animated inputs are rejected with a clear error rather than silently dropping animation frames.
+- Existing behavior is unchanged when neither `--width` nor `--height` is supplied.
 - Converting an image with transparency to JPEG drops the alpha channel. BMP preserves alpha by default in 32-bit mode unless 24-bit is forced via `--bmp-bpp 24`.
 - In batch mode, prefer a separate output directory. Using the input directory as the output directory can cause previously generated files to be picked up on a later run.
 - Directory scanning does not follow symlinked directories by default to prevent unexpected traversal outside selected folders.
@@ -140,6 +148,15 @@ morfpix photo.png -f gif --repeat infinite --gif-speed 5
 
 # Convert an image to 24-bit RGB BMP (stripping alpha for legacy tools)
 morfpix photo.png -f bmp --bmp-bpp 24
+
+# Resize an image to 800px width (preserving aspect ratio)
+morfpix photo.png --width 800
+
+# Fit an image within a 1280x720 box (preserving aspect ratio without stretching)
+morfpix photo.png --width 1280 --height 720
+
+# Resize an image with bilinear filter and convert to WebP
+morfpix photo.png --width 640 --filter triangle -f webp -q 85
 
 # Compress every image in a directory into another directory
 morfpix ./images -f webp -q 82 -o ./compressed

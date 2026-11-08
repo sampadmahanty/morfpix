@@ -15,6 +15,23 @@ fn get_fixture_path(name: &str) -> PathBuf {
         .join(name)
 }
 
+fn create_test_animated_gif(
+    width: u32,
+    height: u32,
+    num_frames: usize,
+) -> Result<Vec<u8>, image::ImageError> {
+    let mut buffer = Vec::new();
+    {
+        let mut encoder = image::codecs::gif::GifEncoder::new(&mut buffer);
+        encoder.set_repeat(image::codecs::gif::Repeat::Infinite)?;
+        for _ in 0..num_frames {
+            let frame = image::Frame::new(image::RgbaImage::new(width, height));
+            encoder.encode_frame(frame)?;
+        }
+    }
+    Ok(buffer)
+}
+
 #[test]
 fn test_cli_short_cmd_mpix() {
     let output = Command::new(get_short_bin_path())
@@ -24,7 +41,7 @@ fn test_cli_short_cmd_mpix() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("morfpix 1.0.0"));
+    assert!(stdout.contains("morfpix 1.1.0"));
 
     let help_output = Command::new(get_short_bin_path())
         .arg("--help")
@@ -70,6 +87,9 @@ fn test_cli_help() {
     assert!(stdout.contains("--baseline"));
     assert!(stdout.contains("--subsample"));
     assert!(stdout.contains("--smoothing"));
+    assert!(stdout.contains("--width"));
+    assert!(stdout.contains("--height"));
+    assert!(stdout.contains("--filter"));
     assert!(stdout.contains("--jobs"));
 }
 
@@ -82,7 +102,7 @@ fn test_cli_version() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("morfpix 1.0.0"));
+    assert!(stdout.contains("morfpix 1.1.0"));
 }
 
 #[test]
@@ -1458,4 +1478,365 @@ fn test_cli_refuses_to_overwrite_hard_link_of_input_file() {
     assert_eq!(content_after, orig_content);
 
     let _ = std::fs::remove_dir_all(&test_dir);
+}
+
+#[test]
+fn test_cli_resize_width_only() {
+    let fixture = get_fixture_path("sample-photo.png");
+    let out_file = std::env::temp_dir().join("morfpix_test_resize_w_only.png");
+    let _ = std::fs::remove_file(&out_file);
+
+    let output = Command::new(get_bin_path())
+        .arg(&fixture)
+        .arg("--width")
+        .arg("32")
+        .arg("-o")
+        .arg(&out_file)
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(
+        output.status.success(),
+        "morfpix --width failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(out_file.exists());
+    let bytes = std::fs::read(&out_file).unwrap();
+    let (w, h) = morfpix_engine::read_image_dimensions(&bytes).unwrap();
+    assert_eq!((w, h), (32, 32));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("32 x 32 px"));
+
+    let _ = std::fs::remove_file(out_file);
+}
+
+#[test]
+fn test_cli_resize_height_only() {
+    let fixture = get_fixture_path("phone-photo.jpeg");
+    let out_file = std::env::temp_dir().join("morfpix_test_resize_h_only.jpg");
+    let _ = std::fs::remove_file(&out_file);
+
+    let output = Command::new(get_bin_path())
+        .arg(&fixture)
+        .arg("--height")
+        .arg("899")
+        .arg("-o")
+        .arg(&out_file)
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(
+        output.status.success(),
+        "morfpix --height failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(out_file.exists());
+    let bytes = std::fs::read(&out_file).unwrap();
+    let (w, h) = morfpix_engine::read_image_dimensions(&bytes).unwrap();
+    assert_eq!((w, h), (600, 899));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("600 x 899 px"));
+
+    let _ = std::fs::remove_file(out_file);
+}
+
+#[test]
+fn test_cli_resize_both_dimensions_fit_box() {
+    let fixture = get_fixture_path("phone-photo.jpeg");
+    let out_file = std::env::temp_dir().join("morfpix_test_resize_box.jpg");
+    let _ = std::fs::remove_file(&out_file);
+
+    let output = Command::new(get_bin_path())
+        .arg(&fixture)
+        .arg("--width")
+        .arg("300")
+        .arg("--height")
+        .arg("300")
+        .arg("-o")
+        .arg(&out_file)
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(
+        output.status.success(),
+        "morfpix --width --height failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(out_file.exists());
+    let bytes = std::fs::read(&out_file).unwrap();
+    let (w, h) = morfpix_engine::read_image_dimensions(&bytes).unwrap();
+    // 1200x1798 fits into 300x300 bounding box as 200x300
+    assert_eq!((w, h), (200, 300));
+
+    let _ = std::fs::remove_file(out_file);
+}
+
+#[test]
+fn test_cli_resize_zero_dimension() {
+    let fixture = get_fixture_path("sample-photo.png");
+
+    let output = Command::new(get_bin_path())
+        .arg(&fixture)
+        .arg("--width")
+        .arg("0")
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Width must be greater than 0"));
+
+    let output2 = Command::new(get_bin_path())
+        .arg(&fixture)
+        .arg("--height")
+        .arg("0")
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(!output2.status.success());
+    let stderr2 = String::from_utf8_lossy(&output2.stderr);
+    assert!(stderr2.contains("Height must be greater than 0"));
+}
+
+#[test]
+fn test_cli_resize_malformed_dimension() {
+    let fixture = get_fixture_path("sample-photo.png");
+
+    let output = Command::new(get_bin_path())
+        .arg(&fixture)
+        .arg("--width")
+        .arg("invalid")
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Width must be a positive integer"));
+
+    let output2 = Command::new(get_bin_path())
+        .arg(&fixture)
+        .arg("--height")
+        .arg("-10")
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(!output2.status.success());
+    let stderr2 = String::from_utf8_lossy(&output2.stderr);
+    assert!(stderr2.contains("Height must be a positive integer"));
+}
+
+#[test]
+fn test_cli_resize_unreasonable_dimension() {
+    let fixture = get_fixture_path("sample-photo.png");
+
+    let output = Command::new(get_bin_path())
+        .arg(&fixture)
+        .arg("--width")
+        .arg("99999")
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Width exceeds maximum allowed limit"));
+
+    let output2 = Command::new(get_bin_path())
+        .arg(&fixture)
+        .arg("--height")
+        .arg("99999")
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(!output2.status.success());
+    let stderr2 = String::from_utf8_lossy(&output2.stderr);
+    assert!(stderr2.contains("Height exceeds maximum allowed limit"));
+}
+
+#[test]
+fn test_cli_resize_filter_without_dimensions() {
+    let fixture = get_fixture_path("sample-photo.png");
+
+    let output = Command::new(get_bin_path())
+        .arg(&fixture)
+        .arg("--filter")
+        .arg("lanczos3")
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Resizing requires at least one dimension (--width or --height)"));
+}
+
+#[test]
+fn test_cli_resize_invalid_filter() {
+    let fixture = get_fixture_path("sample-photo.png");
+
+    let output = Command::new(get_bin_path())
+        .arg(&fixture)
+        .arg("--width")
+        .arg("32")
+        .arg("--filter")
+        .arg("spline")
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(
+        "Resize filter must be one of: lanczos3, catmullrom, triangle, nearest, gaussian"
+    ));
+}
+
+#[test]
+fn test_cli_unchanged_without_resize_flags() {
+    let fixture = get_fixture_path("sample-photo.png");
+    let out_file = std::env::temp_dir().join("morfpix_test_unchanged_no_resize.png");
+    let _ = std::fs::remove_file(&out_file);
+
+    let output = Command::new(get_bin_path())
+        .arg(&fixture)
+        .arg("-f")
+        .arg("png")
+        .arg("-o")
+        .arg(&out_file)
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(output.status.success());
+    assert!(out_file.exists());
+    let bytes = std::fs::read(&out_file).unwrap();
+    let (w, h) = morfpix_engine::read_image_dimensions(&bytes).unwrap();
+    assert_eq!((w, h), (64, 64));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("64 x 64 px"));
+
+    let _ = std::fs::remove_file(out_file);
+}
+
+#[test]
+fn test_cli_rejects_resizing_animated_image() {
+    let test_dir = std::env::temp_dir().join("morfpix_test_animated_reject");
+    let _ = std::fs::remove_dir_all(&test_dir);
+    std::fs::create_dir_all(&test_dir).unwrap();
+
+    let anim_gif = test_dir.join("animated.gif");
+    let gif_bytes =
+        create_test_animated_gif(40, 40, 2).expect("Failed to create test animated GIF");
+    std::fs::write(&anim_gif, &gif_bytes).unwrap();
+
+    let output = Command::new(get_bin_path())
+        .arg(&anim_gif)
+        .arg("--width")
+        .arg("10")
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Resizing animated images is unsupported"),
+        "stderr was: {}",
+        stderr
+    );
+
+    // Verify converting without resize flags succeeds (existing behavior converts first frame)
+    let out_file = test_dir.join("single_frame.png");
+    let output2 = Command::new(get_bin_path())
+        .arg(&anim_gif)
+        .arg("-f")
+        .arg("png")
+        .arg("-o")
+        .arg(&out_file)
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(
+        output2.status.success(),
+        "Converting animated gif without resize failed: {}",
+        String::from_utf8_lossy(&output2.stderr)
+    );
+    assert!(out_file.exists());
+
+    let _ = std::fs::remove_dir_all(&test_dir);
+}
+
+#[test]
+fn test_cli_resize_custom_filter() {
+    let fixture = get_fixture_path("sample-photo.png");
+    let out_file = std::env::temp_dir().join("morfpix_test_resize_custom_filter.png");
+    let _ = std::fs::remove_file(&out_file);
+
+    let output = Command::new(get_bin_path())
+        .arg(&fixture)
+        .arg("--width")
+        .arg("32")
+        .arg("--filter")
+        .arg("catmullrom")
+        .arg("-o")
+        .arg(&out_file)
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(
+        output.status.success(),
+        "morfpix --filter catmullrom failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(out_file.exists());
+    let bytes = std::fs::read(&out_file).unwrap();
+    let (w, h) = morfpix_engine::read_image_dimensions(&bytes).unwrap();
+    assert_eq!((w, h), (32, 32));
+
+    let _ = std::fs::remove_file(out_file);
+}
+
+#[test]
+fn test_cli_resize_batch_directory() {
+    let test_dir = std::env::temp_dir().join("morfpix_test_resize_batch_in");
+    let out_dir = std::env::temp_dir().join("morfpix_test_resize_batch_out");
+    let _ = std::fs::remove_dir_all(&test_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    std::fs::create_dir_all(&test_dir).unwrap();
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    let fixture1 = get_fixture_path("sample-photo.png");
+    let fixture2 = get_fixture_path("phone-photo.jpeg");
+    std::fs::copy(&fixture1, test_dir.join("sample.png")).unwrap();
+    std::fs::copy(&fixture2, test_dir.join("phone.jpeg")).unwrap();
+
+    let output = Command::new(get_bin_path())
+        .arg(&test_dir)
+        .arg("--width")
+        .arg("60")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("Failed to execute morfpix");
+
+    assert!(
+        output.status.success(),
+        "Batch resize failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let out1 = out_dir.join("sample.png");
+    let out2 = out_dir.join("phone.jpg");
+    assert!(out1.exists());
+    assert!(out2.exists());
+
+    let b1 = std::fs::read(&out1).unwrap();
+    let (w1, h1) = morfpix_engine::read_image_dimensions(&b1).unwrap();
+    assert_eq!((w1, h1), (60, 60));
+
+    let b2 = std::fs::read(&out2).unwrap();
+    let (w2, h2) = morfpix_engine::read_image_dimensions(&b2).unwrap();
+    // 1200x1798 scaled to width 60 -> height = round(1798 * 60 / 1200) = 90
+    assert_eq!((w2, h2), (60, 90));
+
+    let _ = std::fs::remove_dir_all(&test_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
 }

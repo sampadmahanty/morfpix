@@ -1,9 +1,10 @@
 mod ui;
 
 use morfpix_engine::{
-    convert, estimate_memory_from_header, estimate_memory_usage, AvifAlphaMode, AvifBitDepth,
-    AvifColorModel, BmpBitsPerPixel, ConversionOptions, GifRepeat, ImageFormat, JpegSubsampling,
-    MAX_INPUT_FILE_SIZE, MAX_REASONABLE_MEMORY_ESTIMATE,
+    convert, estimate_memory_from_header, estimate_memory_usage_with_options, AvifAlphaMode,
+    AvifBitDepth, AvifColorModel, BmpBitsPerPixel, ConversionOptions, GifRepeat, ImageFormat,
+    JpegSubsampling, ResizeFilter, ResizeOptions, MAX_IMAGE_HEIGHT, MAX_IMAGE_PIXELS,
+    MAX_IMAGE_WIDTH, MAX_INPUT_FILE_SIZE, MAX_REASONABLE_MEMORY_ESTIMATE,
 };
 use std::collections::HashSet;
 use std::env;
@@ -189,6 +190,9 @@ fn parse_args(args: &[String], styler: &Styler, cmd_name: &str) -> Option<CliArg
     let mut jobs = None;
     let mut explicit_threads = false;
     let mut only_inputs = false;
+    let mut resize_width: Option<u32> = None;
+    let mut resize_height: Option<u32> = None;
+    let mut resize_filter: Option<ResizeFilter> = None;
     let mut i = 1;
 
     while i < args.len() {
@@ -533,6 +537,76 @@ fn parse_args(args: &[String], styler: &Styler, cmd_name: &str) -> Option<CliArg
                     }
                 }
             }
+            "--width" => {
+                i += 1;
+                if i >= args.len() {
+                    missing_value(arg, styler);
+                }
+                match args[i].parse::<u32>() {
+                    Ok(w) if w > 0 && w <= MAX_IMAGE_WIDTH => resize_width = Some(w),
+                    Ok(0) => {
+                        eprintln!("{} Width must be greater than 0", styler.red("Error:"));
+                        std::process::exit(1);
+                    }
+                    Ok(_) => {
+                        eprintln!(
+                            "{} Width exceeds maximum allowed limit of {} pixels",
+                            styler.red("Error:"),
+                            MAX_IMAGE_WIDTH
+                        );
+                        std::process::exit(1);
+                    }
+                    Err(_) => {
+                        eprintln!("{} Width must be a positive integer", styler.red("Error:"));
+                        std::process::exit(1);
+                    }
+                }
+            }
+            "--height" => {
+                i += 1;
+                if i >= args.len() {
+                    missing_value(arg, styler);
+                }
+                match args[i].parse::<u32>() {
+                    Ok(h) if h > 0 && h <= MAX_IMAGE_HEIGHT => resize_height = Some(h),
+                    Ok(0) => {
+                        eprintln!("{} Height must be greater than 0", styler.red("Error:"));
+                        std::process::exit(1);
+                    }
+                    Ok(_) => {
+                        eprintln!(
+                            "{} Height exceeds maximum allowed limit of {} pixels",
+                            styler.red("Error:"),
+                            MAX_IMAGE_HEIGHT
+                        );
+                        std::process::exit(1);
+                    }
+                    Err(_) => {
+                        eprintln!("{} Height must be a positive integer", styler.red("Error:"));
+                        std::process::exit(1);
+                    }
+                }
+            }
+            "--filter" | "--resize-filter" => {
+                i += 1;
+                if i >= args.len() {
+                    missing_value(arg, styler);
+                }
+                resize_filter = match args[i].to_lowercase().as_str() {
+                    "lanczos3" | "lanczos" => Some(ResizeFilter::Lanczos3),
+                    "catmullrom" | "catmull-rom" | "bicubic" => Some(ResizeFilter::CatmullRom),
+                    "triangle" | "bilinear" => Some(ResizeFilter::Triangle),
+                    "nearest" => Some(ResizeFilter::Nearest),
+                    "gaussian" => Some(ResizeFilter::Gaussian),
+                    _ => {
+                        eprintln!(
+                            "{} Resize filter must be one of: lanczos3, catmullrom, triangle, nearest, gaussian",
+                            styler.red("Error:")
+                        );
+                        std::process::exit(1);
+                    }
+                };
+            }
             option if option.starts_with('-') => {
                 eprintln!("{} Unknown option '{}'", styler.red("Error:"), option);
                 std::process::exit(1);
@@ -553,6 +627,34 @@ fn parse_args(args: &[String], styler: &Styler, cmd_name: &str) -> Option<CliArg
             styler.cyan(&format!("{cmd_name} --help"))
         );
         std::process::exit(1);
+    }
+
+    if resize_filter.is_some() && resize_width.is_none() && resize_height.is_none() {
+        eprintln!(
+            "{} Resizing requires at least one dimension (--width or --height)",
+            styler.red("Error:")
+        );
+        std::process::exit(1);
+    }
+
+    if let (Some(w), Some(h)) = (resize_width, resize_height) {
+        let pixels = w as u64 * h as u64;
+        if pixels > MAX_IMAGE_PIXELS {
+            eprintln!(
+                "{} Requested resize bounding box ({}x{} = {} pixels) exceeds maximum allowed limit ({} pixels)",
+                styler.red("Error:"),
+                w, h, pixels, MAX_IMAGE_PIXELS
+            );
+            std::process::exit(1);
+        }
+    }
+
+    if resize_width.is_some() || resize_height.is_some() {
+        options.resize = Some(ResizeOptions {
+            width: resize_width,
+            height: resize_height,
+            filter: resize_filter.unwrap_or_default(),
+        });
     }
 
     Some(CliArgs {
@@ -1331,7 +1433,7 @@ pub fn run() {
             }
         };
 
-        let memory_estimate = estimate_memory_usage(&data);
+        let memory_estimate = estimate_memory_usage_with_options(&data, &conversion_options);
         if memory_estimate > MAX_REASONABLE_MEMORY_ESTIMATE {
             drop(permit);
             let mut guard = state.lock().unwrap();
