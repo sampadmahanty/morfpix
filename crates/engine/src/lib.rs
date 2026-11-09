@@ -4,9 +4,10 @@ pub mod types;
 
 pub use codec::{encode_image, encode_image_with_options};
 pub use pipeline::{
-    convert, decode_image, decode_image_with_format, detect_format, estimate_memory_from_header,
-    estimate_memory_usage, MAX_IMAGE_ALLOC, MAX_IMAGE_HEIGHT, MAX_IMAGE_PIXELS, MAX_IMAGE_WIDTH,
-    MAX_INPUT_FILE_SIZE, MAX_REASONABLE_MEMORY_ESTIMATE,
+    calculate_resize_dimensions, convert, decode_image, decode_image_with_format, detect_format,
+    estimate_memory_from_header, estimate_memory_usage, estimate_memory_usage_with_options,
+    is_animated, read_image_dimensions, validate_dimensions, MAX_IMAGE_ALLOC, MAX_IMAGE_HEIGHT,
+    MAX_IMAGE_PIXELS, MAX_IMAGE_WIDTH, MAX_INPUT_FILE_SIZE, MAX_REASONABLE_MEMORY_ESTIMATE,
 };
 pub use types::*;
 
@@ -14,6 +15,23 @@ pub use types::*;
 mod tests {
     use super::*;
     use image::{ImageEncoder, Rgba, RgbaImage};
+
+    fn create_animated_gif(
+        width: u32,
+        height: u32,
+        num_frames: usize,
+    ) -> Result<Vec<u8>, image::ImageError> {
+        let mut buffer = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut buffer);
+            encoder.set_repeat(image::codecs::gif::Repeat::Infinite)?;
+            for _ in 0..num_frames {
+                let frame = image::Frame::new(image::RgbaImage::new(width, height));
+                encoder.encode_frame(frame)?;
+            }
+        }
+        Ok(buffer)
+    }
 
     const DISPLAY_P3_ICC: &[u8] = include_bytes!("../../../tests/fixtures/display-p3.icc");
 
@@ -724,6 +742,49 @@ mod tests {
     }
 
     #[test]
+    fn applies_exif_orientation_with_resize() {
+        let mut img = image::RgbImage::new(4, 2);
+        for pixel in img.pixels_mut() {
+            *pixel = image::Rgb([255, 0, 0]);
+        }
+
+        let mut jpeg = Vec::new();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 100);
+        encoder
+            .encode(img.as_raw(), 4, 2, image::ExtendedColorType::Rgb8)
+            .unwrap();
+
+        let mut with_exif = Vec::new();
+        with_exif.extend_from_slice(&jpeg[0..2]);
+        with_exif.extend_from_slice(&[
+            0xFF, 0xE1, 0x00, 0x22, b'E', b'x', b'i', b'f', 0x00, 0x00, 0x49, 0x49, 0x2A, 0x00,
+            0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00,
+            0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]);
+        with_exif.extend_from_slice(&jpeg[2..]);
+
+        // Input 4x2 with Orientation 6 rotates to 2x4 (upright).
+        // Resizing with --width 10 should preserve aspect ratio: 2x4 scaled to width 10 -> height 20.
+        let options = ConversionOptions {
+            format: Some(ImageFormat::Png),
+            resize: Some(ResizeOptions {
+                width: Some(10),
+                height: None,
+                filter: ResizeFilter::Lanczos3,
+            }),
+            ..Default::default()
+        };
+        let (output, result) = convert(&with_exif, &options).unwrap();
+
+        assert_eq!(result.width, 10);
+        assert_eq!(result.height, 20);
+
+        let decoded = image::load_from_memory(&output).unwrap();
+        assert_eq!(decoded.width(), 10);
+        assert_eq!(decoded.height(), 20);
+    }
+
+    #[test]
     fn keeps_input_format_by_default() {
         let data = create_test_image(40, 40);
         let (output, result) = convert(&data, &ConversionOptions::default()).unwrap();
@@ -1040,5 +1101,275 @@ mod tests {
         // Size check: 8-bit is smaller than 24-bit, 24-bit is smaller than 32-bit
         assert!(bpp8_out.len() < bpp24_out.len());
         assert!(bpp24_out.len() < bpp32_out.len());
+    }
+
+    #[test]
+    fn test_calculate_resize_dimensions_width_only() {
+        // Landscape 200x100 -> width 100 => 100x50
+        let (w, h) = calculate_resize_dimensions(200, 100, Some(100), None).unwrap();
+        assert_eq!((w, h), (100, 50));
+
+        // Portrait 100x200 -> width 50 => 50x100
+        let (w, h) = calculate_resize_dimensions(100, 200, Some(50), None).unwrap();
+        assert_eq!((w, h), (50, 100));
+
+        // Rounding: 1920x1080 -> width 1280 => 1280x720
+        let (w, h) = calculate_resize_dimensions(1920, 1080, Some(1280), None).unwrap();
+        assert_eq!((w, h), (1280, 720));
+    }
+
+    #[test]
+    fn test_calculate_resize_dimensions_height_only() {
+        // Landscape 200x100 -> height 50 => 100x50
+        let (w, h) = calculate_resize_dimensions(200, 100, None, Some(50)).unwrap();
+        assert_eq!((w, h), (100, 50));
+
+        // Portrait 100x200 -> height 100 => 50x100
+        let (w, h) = calculate_resize_dimensions(100, 200, None, Some(100)).unwrap();
+        assert_eq!((w, h), (50, 100));
+
+        // Rounding: 1920x1080 -> height 720 => 1280x720
+        let (w, h) = calculate_resize_dimensions(1920, 1080, None, Some(720)).unwrap();
+        assert_eq!((w, h), (1280, 720));
+    }
+
+    #[test]
+    fn test_calculate_resize_dimensions_both_fit_box() {
+        // Wider than box: 200x100 into 100x100 box -> 100x50
+        let (w, h) = calculate_resize_dimensions(200, 100, Some(100), Some(100)).unwrap();
+        assert_eq!((w, h), (100, 50));
+
+        // Taller than box: 100x200 into 100x100 box -> 50x100
+        let (w, h) = calculate_resize_dimensions(100, 200, Some(100), Some(100)).unwrap();
+        assert_eq!((w, h), (50, 100));
+
+        // Same aspect ratio: 200x100 into 400x200 box -> 400x200
+        let (w, h) = calculate_resize_dimensions(200, 100, Some(400), Some(200)).unwrap();
+        assert_eq!((w, h), (400, 200));
+
+        // Upscale fitting box: 100x50 into 300x300 box -> 300x150
+        let (w, h) = calculate_resize_dimensions(100, 50, Some(300), Some(300)).unwrap();
+        assert_eq!((w, h), (300, 150));
+    }
+
+    #[test]
+    fn test_calculate_resize_dimensions_validation() {
+        // Zero dimensions
+        assert!(calculate_resize_dimensions(200, 100, Some(0), None).is_err());
+        assert!(calculate_resize_dimensions(200, 100, None, Some(0)).is_err());
+        assert!(calculate_resize_dimensions(200, 100, Some(0), Some(100)).is_err());
+        assert!(calculate_resize_dimensions(200, 100, Some(100), Some(0)).is_err());
+
+        // Neither dimension provided
+        assert!(calculate_resize_dimensions(200, 100, None, None).is_err());
+
+        // Zero input dimensions
+        assert!(calculate_resize_dimensions(0, 100, Some(100), None).is_err());
+        assert!(calculate_resize_dimensions(100, 0, Some(100), None).is_err());
+
+        // Exceeding maximum width / height
+        assert!(calculate_resize_dimensions(200, 100, Some(MAX_IMAGE_WIDTH + 1), None).is_err());
+        assert!(calculate_resize_dimensions(200, 100, None, Some(MAX_IMAGE_HEIGHT + 1)).is_err());
+
+        // Exceeding maximum pixels
+        assert!(calculate_resize_dimensions(100, 100, Some(15000), Some(15000)).is_err());
+    }
+
+    #[test]
+    fn test_convert_with_resize_width_only() {
+        let data = create_test_image(200, 100);
+        let options = ConversionOptions {
+            format: Some(ImageFormat::Png),
+            resize: Some(ResizeOptions {
+                width: Some(100),
+                height: None,
+                filter: ResizeFilter::Lanczos3,
+            }),
+            ..Default::default()
+        };
+
+        let (output, result) = convert(&data, &options).unwrap();
+        assert_eq!(result.width, 100);
+        assert_eq!(result.height, 50);
+
+        let decoded = image::load_from_memory(&output).unwrap();
+        assert_eq!(decoded.width(), 100);
+        assert_eq!(decoded.height(), 50);
+    }
+
+    #[test]
+    fn test_convert_with_resize_height_only() {
+        let data = create_test_image(200, 100);
+        let options = ConversionOptions {
+            format: Some(ImageFormat::Png),
+            resize: Some(ResizeOptions {
+                width: None,
+                height: Some(40),
+                filter: ResizeFilter::Lanczos3,
+            }),
+            ..Default::default()
+        };
+
+        let (output, result) = convert(&data, &options).unwrap();
+        assert_eq!(result.width, 80);
+        assert_eq!(result.height, 40);
+
+        let decoded = image::load_from_memory(&output).unwrap();
+        assert_eq!(decoded.width(), 80);
+        assert_eq!(decoded.height(), 40);
+    }
+
+    #[test]
+    fn test_convert_with_resize_both_dimensions_fit_box() {
+        let data = create_test_image(200, 100);
+        let options = ConversionOptions {
+            format: Some(ImageFormat::Png),
+            resize: Some(ResizeOptions {
+                width: Some(80),
+                height: Some(80),
+                filter: ResizeFilter::Lanczos3,
+            }),
+            ..Default::default()
+        };
+
+        let (output, result) = convert(&data, &options).unwrap();
+        // 200x100 fitted in 80x80 box -> 80x40
+        assert_eq!(result.width, 80);
+        assert_eq!(result.height, 40);
+
+        let decoded = image::load_from_memory(&output).unwrap();
+        assert_eq!(decoded.width(), 80);
+        assert_eq!(decoded.height(), 40);
+    }
+
+    #[test]
+    fn test_convert_without_resize_keeps_original_dimensions() {
+        let data = create_test_image(120, 80);
+        let options = ConversionOptions {
+            format: Some(ImageFormat::Png),
+            resize: None,
+            ..Default::default()
+        };
+
+        let (output, result) = convert(&data, &options).unwrap();
+        assert_eq!(result.width, 120);
+        assert_eq!(result.height, 80);
+
+        let decoded = image::load_from_memory(&output).unwrap();
+        assert_eq!(decoded.width(), 120);
+        assert_eq!(decoded.height(), 80);
+    }
+
+    #[test]
+    fn test_convert_rejects_resizing_animated_gif() {
+        let buffer = create_animated_gif(40, 40, 2).unwrap();
+
+        let options_with_resize = ConversionOptions {
+            format: Some(ImageFormat::Gif),
+            resize: Some(ResizeOptions {
+                width: Some(20),
+                height: None,
+                filter: ResizeFilter::Lanczos3,
+            }),
+            ..Default::default()
+        };
+
+        let err = convert(&buffer, &options_with_resize).unwrap_err();
+        assert!(err.contains("Resizing animated images is unsupported"));
+
+        // Without resize, existing behavior converts first frame successfully
+        let options_without_resize = ConversionOptions {
+            format: Some(ImageFormat::Png),
+            resize: None,
+            ..Default::default()
+        };
+        let (output, result) = convert(&buffer, &options_without_resize).unwrap();
+        assert_eq!(result.width, 40);
+        assert_eq!(result.height, 40);
+        assert!(!output.is_empty());
+    }
+
+    #[test]
+    fn test_convert_resizes_static_single_frame_gif() {
+        let buffer = create_animated_gif(60, 30, 1).unwrap();
+
+        let options = ConversionOptions {
+            format: Some(ImageFormat::Gif),
+            resize: Some(ResizeOptions {
+                width: Some(30),
+                height: None,
+                filter: ResizeFilter::Lanczos3,
+            }),
+            ..Default::default()
+        };
+
+        let (output, result) = convert(&buffer, &options).unwrap();
+        assert_eq!(result.width, 30);
+        assert_eq!(result.height, 15);
+        let decoded = image::load_from_memory(&output).unwrap();
+        assert_eq!(decoded.width(), 30);
+        assert_eq!(decoded.height(), 15);
+    }
+
+    #[test]
+    fn test_convert_with_custom_resize_filter() {
+        let data = create_test_image(100, 100);
+        let options = ConversionOptions {
+            format: Some(ImageFormat::Png),
+            resize: Some(ResizeOptions {
+                width: Some(50),
+                height: Some(50),
+                filter: ResizeFilter::Nearest,
+            }),
+            ..Default::default()
+        };
+
+        let (output, result) = convert(&data, &options).unwrap();
+        assert_eq!(result.width, 50);
+        assert_eq!(result.height, 50);
+        let decoded = image::load_from_memory(&output).unwrap();
+        assert_eq!(decoded.width(), 50);
+        assert_eq!(decoded.height(), 50);
+    }
+
+    #[test]
+    fn crafted_gif_with_large_dimensions_does_not_allocate_and_is_rejected() {
+        let mut crafted = Vec::new();
+        crafted.extend_from_slice(b"GIF89a");
+        crafted.extend_from_slice(&60000u16.to_le_bytes()); // width 60,000 > MAX_IMAGE_WIDTH
+        crafted.extend_from_slice(&60000u16.to_le_bytes()); // height 60,000 > MAX_IMAGE_HEIGHT
+        crafted.push(0x80); // GCT present: 2 colors
+        crafted.push(0x00); // background color
+        crafted.push(0x00); // aspect ratio
+        crafted.extend_from_slice(&[0, 0, 0, 255, 255, 255]); // GCT: 2 colors (6 bytes)
+        crafted.push(0x2C); // Image descriptor
+        crafted.extend_from_slice(&0u16.to_le_bytes()); // left 0
+        crafted.extend_from_slice(&0u16.to_le_bytes()); // top 0
+        crafted.extend_from_slice(&60000u16.to_le_bytes()); // frame w 60,000
+        crafted.extend_from_slice(&60000u16.to_le_bytes()); // frame h 60,000
+        crafted.push(0x00); // no LCT
+        crafted.push(0x02); // LZW min code size
+        crafted.push(0x00); // 0-length sub-block
+        crafted.push(0x3B); // trailer
+
+        // is_animated must not allocate or panic, and should return false
+        assert!(!is_animated(&crafted, ImageFormat::Gif));
+
+        // When resizing, convert should safely reject the excessive dimensions without unbounded allocation
+        let options = ConversionOptions {
+            format: Some(ImageFormat::Png),
+            resize: Some(ResizeOptions {
+                width: Some(100),
+                height: None,
+                filter: ResizeFilter::Lanczos3,
+            }),
+            ..Default::default()
+        };
+        let err = convert(&crafted, &options).unwrap_err();
+        assert!(
+            err.contains("exceed") || err.contains("limit"),
+            "Actual error was: {}",
+            err
+        );
     }
 }

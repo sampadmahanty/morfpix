@@ -111,6 +111,11 @@ pub fn print_help(styler: &Styler, cmd_name: &str) {
     println!(
         "        --bmp-bpp <8|24|32|auto> BMP bits per pixel: 8, 24, 32, or auto (default: auto)"
     );
+    println!("        --width <PX>         Target width in pixels (preserves aspect ratio)");
+    println!("        --height <PX>        Target height in pixels (preserves aspect ratio)");
+    println!(
+        "        --filter <FILTER>    Resize filter: lanczos3, catmullrom, triangle, nearest, gaussian (default: lanczos3)"
+    );
     println!("    -j, --jobs <N>           Concurrent jobs for batch mode, 0 = all cores (default: auto up to 4)");
     println!("    -h, --help               Print this help manual");
     println!("    -V, --version            Print version information");
@@ -133,6 +138,8 @@ pub fn print_help(styler: &Styler, cmd_name: &str) {
     );
     println!("    {} photo.png -f gif --repeat infinite", cmd_name);
     println!("    {} photo.png -f bmp --bmp-bpp 24", cmd_name);
+    println!("    {} photo.png --width 800", cmd_name);
+    println!("    {} photo.png --width 800 --height 600", cmd_name);
     println!("    {} ./images -f webp -o ./compressed", cmd_name);
 }
 

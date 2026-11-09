@@ -13,7 +13,7 @@ pub const MAX_IMAGE_ALLOC: u64 = 256 * 1024 * 1024;
 pub const MAX_INPUT_FILE_SIZE: usize = 256 * 1024 * 1024;
 pub const MAX_REASONABLE_MEMORY_ESTIMATE: usize = 2 * 1024 * 1024 * 1024; // 2 GiB
 
-pub(crate) fn validate_dimensions(width: u32, height: u32) -> Result<(), String> {
+pub fn validate_dimensions(width: u32, height: u32) -> Result<(), String> {
     if width == 0 || height == 0 {
         return Err("Image dimensions cannot be zero".to_string());
     }
